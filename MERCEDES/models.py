@@ -12,7 +12,7 @@ class User_Table(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(121), unique=True, index=True)
     user_id = Column(String(15), unique=True, index=True)  # non-editable
-    username = Column(Text, unique=True)  # editable
+    username = Column(Text)  # editable
     password = Column(Text)  # encrypted
     profile_photo = Column(Text)
 
