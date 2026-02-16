@@ -1,5 +1,5 @@
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi import Depends
+from fastapi import Depends, HTTPException
 
 import json, jwt, random, os, re, string, time
 from SMTPEmail import SMTP
@@ -40,6 +40,15 @@ def decode_jwt(token: str):
         # Ensure the token includes "expires"
         if "expires" not in decoded_token:
             raise ValueError("Invalid Token")
+        # Check token expiry
+        if float(decoded_token["expires"]) <= time.time():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Token expired!",
+                    "message": "Kindly input new token!"
+                }
+            )
         return decoded_token  # if decoded_token["expires"] >= time.time() else None
     except jwt.ExpiredSignatureError:
         return {
@@ -49,10 +58,12 @@ def decode_jwt(token: str):
     except jwt.InvalidTokenError as e:
         return {
             "statusCode": 401,
-            "err": "Invalid Token!"
+            "err": "Invalid Token!",
+            "error": str(e)
         }
         # raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
     except Exception as e:
+        raise
         return {
             "statusCode": 400,
             "err": str(e)
@@ -65,7 +76,7 @@ def generate_token(data):
     payload = {}
     for i in payload_list:
         payload[i] = data[i]
-    payload["expires"] = time.time() + 86400  # expiry time of 24 hrs
+    payload["expires"] = time.time() + 5400  # expiry time of 1hr 30mins
 
     #  [ TOKENIZATION ]
     JWT_SECRET = os.getenv("SECRET")

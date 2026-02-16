@@ -9,10 +9,15 @@ import time
 from httpx import Timeout
 from passlib.hash import argon2
 
+from MERCEDES.helper import (
+    decode_jwt,
+    generate_otp, generate_token,
+    get_token, smtp_send_otp)
 from MERCEDES.models import (
-    User_Table)
+    Otp_Table, User_Table)
 from MERCEDES.pydantic_models import (
-    PYDANTIC_AUTH_SIGNUP)
+    PYDANTIC_AUTH_LOGIN, PYDANTIC_AUTH_SEND_OTP,
+    PYDANTIC_AUTH_SIGNUP, PYDANTIC_AUTH_VERIFY_OTP)
 
 auth_base_url = "/api/auth"
 
@@ -74,4 +79,258 @@ def auth_signup(pyd_data: PYDANTIC_AUTH_SIGNUP, db: db_dependency):
         "statusCode": 201,
         "message": "Account created successfully!",
         "user_id": email
+    }
+
+
+# Login
+@app.post(auth_base_url+"/login", status_code=status.HTTP_200_OK, tags=["AUTH"])
+@app.post(auth_base_url+"/login/", status_code=status.HTTP_200_OK, tags=["AUTH"])
+def auth_login(pyd_data: PYDANTIC_AUTH_LOGIN, db: db_dependency):
+    if (not pyd_data.username) or (pyd_data.username in [ "", " ", None]):
+        raise HTTPException(status_code=400, detail="input username/email!")
+
+    username = pyd_data.username
+    password = pyd_data.password
+
+    # check if user exists either by email or username
+    check_user = db.query(User_Table).filter(User_Table.email == username).first()
+    if check_user is None:
+        check_user = db.query(User_Table).filter(User_Table.username == username).first()
+        if check_user is None:
+            check_user = db.query(User_Table).filter(User_Table.user_id == username).first()
+
+    # if user doesn't exist or password is incorrect
+    if (check_user is None) or (not argon2.verify(password, check_user.password)):
+        # return bcrypt_sha256.verify(password, check_user.password)
+        raise HTTPException(
+            status_code=400,
+            detail="invalid username or password!"
+        )
+    # check if validated user's account is activated
+    if check_user.is_activated is False:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Account not activated!",
+                "message": "Kindly activate account!",
+                "user_id": username
+            })
+
+    # re-assign user_id/username/email from db
+    user_id = check_user.user_id
+    username = check_user.username
+    email = check_user.email
+
+    # tokenize user's input
+    data = {
+        "user_id": user_id,
+        "username": username,
+        "email": email
+    }
+    token = generate_token(data)
+    token = token["token"]
+
+    return {
+        "statusCode": 200,
+        "message": "login successful!",
+        "user_id": pyd_data.username,
+        "token": token
+    }
+
+# Verify account via token
+@app.get(auth_base_url+"/activate", status_code=status.HTTP_200_OK, tags=["AUTH"])
+@app.get(auth_base_url+"/activate/", status_code=status.HTTP_200_OK, tags=["AUTH"])
+def activate_user(db: db_dependency, token: str = Depends(get_token)):
+    # To activate user's account via token
+    payload = decode_jwt(token)
+    # token_expiry = payload.pop("expires")
+
+    # [ CHECK TOKEN EXPIRY ]
+    """
+    if token_expiry <= time.time():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Token expired!",
+                "message": "Kindly input new token!"
+            }
+        )
+    """
+
+    # check otp table to activate user
+    check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()
+    if check_user is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid token!/User does not exist!",
+                "message": "Kindly input new activation token!"
+            }
+        )
+    if check_user.is_activated is True:
+        return {
+            "statusCode": 200,
+            "message": "Account has been activated!",
+            "user_id": check_user.username
+        }
+    check_user.is_activated = True
+    db.commit()
+
+    return {
+        "statusCode": 200,
+        "message": "Success! Account Activated!",
+        "user_id": check_user.username
+    }
+
+
+@app.post(auth_base_url+"/send_otp", status_code=status.HTTP_200_OK, tags=["AUTH"])
+@app.post(auth_base_url+"/send_otp/", status_code=status.HTTP_200_OK, tags=["AUTH"])
+def send_otp(pyd_data: PYDANTIC_AUTH_SEND_OTP, db: db_dependency):
+    # send/return otp for a user
+    # username is email/username/user_id
+    username = pyd_data.username
+
+    # check if user exists either by email or username
+    check_by_username = db.query(User_Table).filter(User_Table.email == username).first()
+    if check_by_username is None:
+        check_by_username = db.query(User_Table).filter(User_Table.username == username).first()
+        if check_by_username is None:
+            check_by_username = db.query(User_Table).filter(User_Table.user_id == username).first()
+
+    if check_by_username is None:
+        raise HTTPException(
+            status_code=400,
+            detail="{} does not exist!".format(username)
+        )
+
+    user_id=check_by_username.user_id
+    email=check_by_username.email
+    username=check_by_username.username
+    otp_code=generate_otp()
+    otp_hash=argon2.hash(str(otp_code))
+    otp_expires = str(time.time() + 300)  # otp lasts 5-minutes
+
+    check_otp_table = db.query(Otp_Table).filter(Otp_Table.user_id == user_id).first()
+    if check_otp_table is None:
+        # if no record found for user, create new record
+        new_otp = Otp_Table(
+            user_id=user_id,
+            otp_token=otp_hash,
+            otp_expiry=otp_expires
+        )
+        db.add(new_otp)
+        db.commit()
+    else:
+        # update existing otp record
+        check_otp_table.otp_token=otp_hash
+        check_otp_table.otp_expiry=otp_expires
+        db.commit()
+
+    smtp_data = smtp_send_otp(email, username, otp_code)
+    # use smtp to send email
+    return {
+        "statusCode": 200,
+        "message": smtp_data.get("error") or None,
+        "otp": smtp_data.get("otp") or None,
+        "user_id": pyd_data.username
+    }
+
+
+@app.post(auth_base_url+"/verify_otp", status_code=status.HTTP_200_OK, tags=["AUTH"])
+@app.post(auth_base_url+"/verify_otp/", status_code=status.HTTP_200_OK, tags=["AUTH"])
+def verify_otp(pyd_data:PYDANTIC_AUTH_VERIFY_OTP, db: db_dependency):
+    # validate otp for a user:
+    username = pyd_data.username
+    otp_code = pyd_data.otp_code
+
+    # check if user exists
+    # check if otp is expired
+
+    # check if user exists either by email or username
+    check_by_username = db.query(User_Table).filter(User_Table.email == username).first()
+    if check_by_username is None:
+        check_by_username = db.query(User_Table).filter(User_Table.username == username).first()
+        if check_by_username is None:
+            check_by_username = db.query(User_Table).filter(User_Table.user_id == username).first()
+
+    if check_by_username is None:
+        raise HTTPException(
+            status_code=400,
+            detail="{} does not exist!".format(username)
+        )
+
+    # check otp_table to validate otp expiry and verify otp
+    check_otp = db.query(Otp_Table).filter(Otp_Table.user_id == check_by_username.user_id).first()
+    if float(check_otp.otp_expiry) <= time.time():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "OTP Expired! Kindly request a new OTP!",
+                "user_id": username
+            }
+        )
+
+    otp_validate=argon2.verify(otp_code, check_otp.otp_token)
+    if otp_validate is False:
+        raise HTTPException(status_code=400, detail="invalid otp!")
+    data = {
+        "username": check_by_username.username,
+        "user_id": check_by_username.user_id,
+        "email": check_by_username.email
+    }
+
+    token = generate_token(data)
+    token = token["token"]
+    return {
+        "statusCode": 200,
+        "message": "OTP verified successfully!",
+        "user_id": username,
+        "token": token
+    }
+
+
+@app.get(auth_base_url+"/refresh_token", status_code=status.HTTP_200_OK, tags=["AUTH"])
+@app.get(auth_base_url+"/refresh_token/", status_code=status.HTTP_200_OK, tags=["AUTH"])
+def refresh_token(db: db_dependency, token: str = Depends(get_token)):
+    # get user's profile info via validated token
+    payload = decode_jwt(token)
+    # return payload
+
+    # check if user exists
+    check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()
+    if check_user is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid token!/User does not exist!",
+                "message": "Kindly input new token!"
+            }
+        )
+    if check_user.is_activated is False:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Account not activated!",
+                "message": "Kindly activate account!",
+                "user_id": check_user.user_id
+            }
+        )
+
+    # if user exists and is activated
+    username = check_user.username
+    user_id = check_user.user_id
+    email = check_user.email
+
+    data = {
+        "user_id": user_id,
+        "username": username,
+        "email": email
+    }
+    token = generate_token(data)
+    token = token["token"]
+
+    return {
+        "statusCode": 200,
+        "message": "Success!",
+        "token": token
     }
