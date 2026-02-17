@@ -115,25 +115,31 @@ def smtp_send_otp(email=None, username=None, otp_code=None):
         return{
             "error": "input email, username, and otp_code"
         }
+
+    """
     return {
         "error": "SMTP temporarily down!",
         "otp": otp_code
     }
+    """
 
     try:
         # Create the email content
         msg = MIMEMultipart()
         sender_addr = os.getenv("SMTP_ACCOUNT")
-        msg["From"] = formataddr(("SECURITY", sender_addr))
+        msg["From"] = formataddr(("Mercedes.teams", sender_addr))
         msg['To'] = email
         msg['Subject'] = 'One Time Password [ No-reply! ]'
 
         # Email body
         body = """
-        """.format(username, otp_code)
+        hello {username}
+        <br>
+        otp code: {otp_code}
+        """.format(username=username, otp_code=otp_code)
 
         msg.attach(MIMEText(body, 'html'))
-        server = smtplib.SMTP(os.getenv("SMTP_SERVER"), 465)
+        server = smtplib.SMTP(os.getenv("SMTP_SERVER"), 587)
         server.ehlo()  # Ensure the connection is established
         server.starttls()  # Secure the connection
         server.login(os.getenv("SMTP_ACCOUNT"), os.getenv("SMTP_PASSWORD"))

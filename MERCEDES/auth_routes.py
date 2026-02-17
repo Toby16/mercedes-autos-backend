@@ -5,9 +5,11 @@ import httpx
 import json
 import os
 import random
+import secrets
 import time
 from httpx import Timeout
 from passlib.hash import argon2
+from sqlalchemy import or_
 
 from MERCEDES.helper import (
     decode_jwt,
@@ -56,7 +58,8 @@ def auth_signup(pyd_data: PYDANTIC_AUTH_SIGNUP, db: db_dependency):
 
     email = str(pyd_data.email)
     username = (str(pyd_data.email)).split("@")[0]
-    user_id = "ID_" + ''.join(random.choices(username.lower(), k=11))
+    # user_id = "ID_" + ''.join(random.choices(username.lower(), k=11))
+    user_id = "ID_" + secrets.token_urlsafe(8)
     password = pyd_data.password
     password_hash_bcrypt = argon2.hash(password)
     slug = (password)[::-1]  #  [ reversed user password ]
@@ -93,11 +96,13 @@ def auth_login(pyd_data: PYDANTIC_AUTH_LOGIN, db: db_dependency):
     password = pyd_data.password
 
     # check if user exists either by email or username
-    check_user = db.query(User_Table).filter(User_Table.email == username).first()
-    if check_user is None:
-        check_user = db.query(User_Table).filter(User_Table.username == username).first()
-        if check_user is None:
-            check_user = db.query(User_Table).filter(User_Table.user_id == username).first()
+    check_user = db.query(User_Table).filter(
+        or_(
+            User_Table.email == username,
+            User_Table.username == username,
+            User_Table.user_id == username
+        )
+    ).first()
 
     # if user doesn't exist or password is incorrect
     if (check_user is None) or (not argon2.verify(password, check_user.password)):
@@ -191,11 +196,13 @@ def send_otp(pyd_data: PYDANTIC_AUTH_SEND_OTP, db: db_dependency):
     username = pyd_data.username
 
     # check if user exists either by email or username
-    check_by_username = db.query(User_Table).filter(User_Table.email == username).first()
-    if check_by_username is None:
-        check_by_username = db.query(User_Table).filter(User_Table.username == username).first()
-        if check_by_username is None:
-            check_by_username = db.query(User_Table).filter(User_Table.user_id == username).first()
+    check_by_username = db.query(User_Table).filter(
+        or_(
+            User_Table.email == username,
+            User_Table.username == username,
+            User_Table.user_id == username
+        )
+    ).first()
 
     if check_by_username is None:
         raise HTTPException(
@@ -230,7 +237,8 @@ def send_otp(pyd_data: PYDANTIC_AUTH_SEND_OTP, db: db_dependency):
     # use smtp to send email
     return {
         "statusCode": 200,
-        "message": smtp_data.get("error") or None,
+        "message": smtp_data.get("message") or "error",
+        "error": smtp_data.get("error") or None,
         "otp": smtp_data.get("otp") or None,
         "user_id": pyd_data.username
     }
@@ -247,11 +255,13 @@ def verify_otp(pyd_data:PYDANTIC_AUTH_VERIFY_OTP, db: db_dependency):
     # check if otp is expired
 
     # check if user exists either by email or username
-    check_by_username = db.query(User_Table).filter(User_Table.email == username).first()
-    if check_by_username is None:
-        check_by_username = db.query(User_Table).filter(User_Table.username == username).first()
-        if check_by_username is None:
-            check_by_username = db.query(User_Table).filter(User_Table.user_id == username).first()
+    check_by_username = db.query(User_Table).filter(
+        or_(
+            User_Table.email == username,
+            User_Table.username == username,
+            User_Table.user_id == username
+        )
+    ).first()
 
     if check_by_username is None:
         raise HTTPException(
