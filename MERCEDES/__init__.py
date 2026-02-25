@@ -6,7 +6,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-
 # List of allowed origins
 """
 origins = [

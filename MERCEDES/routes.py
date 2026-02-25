@@ -21,4 +21,4 @@ def index():
         "message": "nothing to see here!"
     }
 
-from MERCEDES import auth_routes
+from MERCEDES import auth_routes, user_routes

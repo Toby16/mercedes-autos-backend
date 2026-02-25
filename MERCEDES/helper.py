@@ -13,6 +13,21 @@ from email_validator import validate_email, EmailNotValidError
 from dotenv import load_dotenv
 load_dotenv()
 
+# SSO UTIL - start #
+from authlib.integrations.starlette_client import OAuth
+from starlette.config import Config
+config = Config(".env")
+oauth = OAuth(config)
+oauth.register(
+    name="google",
+    client_id=config("GOOGLE_CLIENT_ID"),
+    client_secret=config("GOOGLE_CLIENT_SECRET"),
+    server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
+    client_kwargs={"scope": "openid email profile"},
+)
+# SSO UTIL - end #
+
+
 
 # To check if an input is a valid email address
 def email_validator(usr_email):

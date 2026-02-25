@@ -1,5 +1,7 @@
 from MERCEDES import app
-from fastapi import HTTPException, File, UploadFile, Form, Depends, status
+from fastapi import (HTTPException,
+    File, UploadFile, Form, Depends,
+    status, Request)
 from MERCEDES.routes import db_dependency
 import httpx
 import json
@@ -12,7 +14,7 @@ from passlib.hash import argon2
 from sqlalchemy import or_
 
 from MERCEDES.helper import (
-    decode_jwt,
+    decode_jwt, oauth,
     generate_otp, generate_token,
     get_token, smtp_send_otp)
 from MERCEDES.models import (
@@ -21,7 +23,68 @@ from MERCEDES.pydantic_models import (
     PYDANTIC_AUTH_LOGIN, PYDANTIC_AUTH_SEND_OTP,
     PYDANTIC_AUTH_SIGNUP, PYDANTIC_AUTH_VERIFY_OTP)
 
+
 auth_base_url = "/api/auth"
+
+
+# GOOGLE SSO ROUTE - start #
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.responses import RedirectResponse
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SECRET_KEY", "supersecret"))
+
+# Redirect user to Google
+@app.get(auth_base_url+"/google", status_code=status.HTTP_200_OK, tags=["AUTH"])
+async def google_login(request: Request):
+    redirect_uri = request.url_for("google_callback")
+    return await oauth.google.authorize_redirect(request, redirect_uri)
+
+
+# Google callback
+@app.get(auth_base_url+"/google/callback", status_code=status.HTTP_200_OK, tags=["AUTH"])
+async def google_callback(request: Request, db: db_dependency):
+    token = await oauth.google.authorize_access_token(request)
+    # userinfo = await oauth.google.parse_id_token(token, nonce, leeway=60)  # 60 seconds leeway
+    user_info = token.get("userinfo")
+
+    email = user_info["email"]
+    name = user_info["name"]
+    name = "".join(name.split())
+    user_id = str(user_info["sub"])[:14]
+
+    user = db.query(User_Table).filter(User_Table.email == email).first()
+    # Auto signup
+    if not user:
+        # sso users get to use "none" as their password in auth_signup() & auth_login()
+        # the above statement is an intended.hidden.feature
+        user = User(
+            email=email,
+            username=name,
+            user_id=user_id,
+            password="none",
+            slug="none"[::-1],
+            is_activated=True
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    # Issue JWT
+    # jwt_token = create_jwt(user.id)
+    data = {
+        "user_id": user_id,
+        "email": email,
+        "username": name
+    }
+    jwt_token = generate_token(data)
+    access_token = jwt_token["token"]
+
+    return {
+        "statusCode": 200,
+        "message": "SSO login successful",
+        "user_id": name,
+        "access_token": access_token
+    }
+# GOOGLE SSO ROUTE - end #
 
 
 # Signup
@@ -148,19 +211,6 @@ def auth_login(pyd_data: PYDANTIC_AUTH_LOGIN, db: db_dependency):
 def activate_user(db: db_dependency, token: str = Depends(get_token)):
     # To activate user's account via token
     payload = decode_jwt(token)
-    # token_expiry = payload.pop("expires")
-
-    # [ CHECK TOKEN EXPIRY ]
-    """
-    if token_expiry <= time.time():
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "Token expired!",
-                "message": "Kindly input new token!"
-            }
-        )
-    """
 
     # check otp table to activate user
     check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()
@@ -304,7 +354,6 @@ def verify_otp(pyd_data:PYDANTIC_AUTH_VERIFY_OTP, db: db_dependency):
 def refresh_token(db: db_dependency, token: str = Depends(get_token)):
     # get user's profile info via validated token
     payload = decode_jwt(token)
-    # return payload
 
     # check if user exists
     check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()

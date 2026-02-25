@@ -32,3 +32,18 @@ class PYDANTIC_AUTH_VERIFY_OTP(BaseModel):
         "1234",
         "v53t"
     ])
+
+class PYDANTIC_USER_UPDATE_PROFILE(BaseModel):
+    # update user's profile
+    username: str = Field(examples=[
+        "updated_username"
+    ])
+
+class PYDANTIC_USER_CHANGE_PASSWORD(BaseModel):
+    # change user's password
+    current_password: str = Field(examples=["testpassword"])
+    new_password: str = Field(examples=["newtestpassword"])
+
+class PYDANTIC_USER_FORGOT_PASSWORD(BaseModel):
+    # change user's password
+    new_password: str = Field(examples=["newtestpassword"])
