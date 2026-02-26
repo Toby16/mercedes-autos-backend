@@ -8,6 +8,10 @@ import random
 import time
 from httpx import Timeout
 from passlib.hash import argon2
+# [ CLOUDINARY ]
+import cloudinary
+import cloudinary.uploader
+import cloudinary.api
 
 from MERCEDES.helper import (
     decode_jwt, generate_token,
@@ -295,5 +299,107 @@ def forgot_password(
         "statusCode": 200,
         "message": "user password updated!",
         "user_id": check_user.username,
+        "token": token
+    }
+
+
+@app.get(user_base_url+"/recover/password", status_code=status.HTTP_200_OK, tags=["USER"])
+@app.get(user_base_url+"/recover/password/", status_code=status.HTTP_200_OK, tags=["USER"])
+def recover_current_password(
+    db: db_dependency, token: str = Depends(get_token)):
+    # update password of a user after verified otp for #9.99
+    payload = decode_jwt(token)
+
+    # check if user exists
+    check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()
+    if check_user is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid token!/User does not exist!",
+                "message": "Kindly input new token!"
+            }
+        )
+    if check_user.is_activated is False:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Account not activated!",
+                "message": "Kindly activate account!",
+                "user_id": check_user.username
+            }
+        )
+
+    data = {
+        "user_id": check_user.user_id,
+        "username": check_user.username,
+        "email": check_user.email
+    }
+    current_password=check_user.slug[::-1]
+    token = generate_token(data)
+    token = token["token"]
+
+    return {
+        "statusCode": 200,
+        "message": "user password updated!",
+        "user_id": check_user.username,
+        "password": current_password,
+        "token": token
+    }
+
+
+# [ CLOUDINARY CONFIG ]
+cloudinary.config(
+  cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME'),
+  api_key = os.getenv('CLOUDINARY_API_KEY'),
+  api_secret = os.getenv('CLOUDINARY_SECRET_KEY')
+)
+@app.post(user_base_url+"/update/profile_photo", status_code=status.HTTP_200_OK, tags=["USER"])
+@app.post(user_base_url+"/update/profile_photo/", status_code=status.HTTP_200_OK, tags=["USER"])
+async def upload_profile_photo(
+    db: db_dependency, token: str = Depends(get_token),
+    file: UploadFile = File(...)):
+    # update profile_photo of an authenticated user
+    payload = decode_jwt(token)
+
+    # check if user exists
+    check_user = db.query(User_Table).filter(User_Table.user_id == payload["user_id"]).first()
+    if check_user is None:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Invalid token!/User does not exist!",
+                "message": "Kindly input new token!"
+            }
+        )
+    if check_user.is_activated is False:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Account not activated!",
+                "message": "Kindly activate account!",
+                "user_id": check_user.username
+            }
+        )
+    data = {
+        "user_id": check_user.user_id,
+        "username": check_user.username,
+        "email": check_user.email
+    }
+    token = generate_token(data)
+    token = token["token"]
+
+    # Upload image to Cloudinary
+    result = cloudinary.uploader.upload(file.file)
+    url = str(result.get("url"))
+    # update photo url
+    check_user.profile_photo = url
+    db.commit()
+
+    return {
+        "statusCode": 200,
+        "message": "user profile photo updated!",
+        "user_id": check_user.username,
+        "profile_photo": url,
         "token": token
     }

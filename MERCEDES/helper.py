@@ -91,7 +91,7 @@ def generate_token(data):
     payload = {}
     for i in payload_list:
         payload[i] = data[i]
-    payload["expires"] = time.time() + 5400  # expiry time of 1hr 30mins
+    payload["expires"] = time.time() + 1800  # expiry time of 30mins
 
     #  [ TOKENIZATION ]
     JWT_SECRET = os.getenv("SECRET")
