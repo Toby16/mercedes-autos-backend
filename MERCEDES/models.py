@@ -25,6 +25,6 @@ class Otp_Table(Base):
     __tablename__ = "Otp_Table"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String(18))
+    user_id = Column(String(15))
     otp_token = Column(Text)  # str/tokenized
     otp_expiry = Column(String(20))

@@ -56,7 +56,7 @@ async def google_callback(request: Request, db: db_dependency):
     if not user:
         # sso users get to use "none" as their password in auth_signup() & auth_login()
         # the above statement is an intended.hidden.feature
-        user = User(
+        user = User_Table(
             email=email,
             username=name,
             user_id=user_id,
